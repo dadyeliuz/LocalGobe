@@ -1,0 +1,68 @@
+# Dependencies & build outputs
+node_modules/
+dist/
+dist-desktop/
+release/
+.vite/
+*.tsbuildinfo
+
+# Local user data, imported builds, and runtime state
+/data/
+data/
+localgobe-accounts.json
+leaderboards.json
+*.ndjson
+
+# Copyrighted / user-provided game files (never stage or commit)
+*.apk
+*.APK
+*.ipa
+*.IPA
+*.swf
+*.SWF
+*.flv
+*.FLV
+*.fla
+*.FLA
+*.sol
+*.SOL
+*.mp3
+*.MP3
+*.ane
+*.ANE
+*.wasm
+*.ttf
+*.TTF
+*.otf
+*.OTF
+
+# Specific historical Mogobe filenames (extra guardrail)
+MogobeTabIL.*
+LoginGR.*
+ServersListGR.*
+RegistGR.*
+ControlPanel.*
+ControlPanelPetSM.*
+AvatarsGR.*
+BrandAwardGR.*
+Popups.*
+MogoWall.*
+room_*.swf
+room_*.txt
+
+# Temporary extraction, logs, caches
+tmp/
+temp/
+*.tmp
+*.log
+logs/
+.cache/
+
+# IDE & OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo

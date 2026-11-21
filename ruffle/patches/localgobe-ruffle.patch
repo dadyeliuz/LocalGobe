@@ -1,0 +1,1062 @@
+diff --git a/ruffle-main/core/src/avm2/activation.rs b/ruffle-main/core/src/avm2/activation.rs
+index ac58f9f6..aa0a60dc 100644
+--- a/ruffle-main/core/src/avm2/activation.rs
++++ b/ruffle-main/core/src/avm2/activation.rs
+@@ -197,6 +197,14 @@ impl<'a, 'gc> Activation<'a, 'gc> {
+                 proto = current_proto.proto(self).map(|o| o.into());
+             }
+ 
++            if let Some(scope) =
++                crate::avm2::globals::flash::system::mogobe_platform_compat::resolve_mogobe_platform_scope(
++                    self, name,
++                )?
++            {
++                return Ok(Some(scope));
++            }
++
+             Ok(None)
+         }
+     }
+@@ -441,7 +449,7 @@ impl<'a, 'gc> Activation<'a, 'gc> {
+     /// Call the superclass's instance initializer.
+     ///
+     /// This method may panic if called with a Null or Undefined receiver.
+-    fn super_init(
++    pub fn super_init(
+         &mut self,
+         receiver: Value<'gc>,
+         args: FunctionArgs<'_, 'gc>,
+diff --git a/ruffle-main/core/src/avm2/class.rs b/ruffle-main/core/src/avm2/class.rs
+index 438da116..28e0967e 100644
+--- a/ruffle-main/core/src/avm2/class.rs
++++ b/ruffle-main/core/src/avm2/class.rs
+@@ -255,12 +255,51 @@ impl<'gc> Class<'gc> {
+         mc: &Mutation<'gc>,
+     ) -> Self {
+         let mut class = ClassData::empty(name);
++        if let Some(super_class) = super_class {
++            class.instance_allocator = super_class.instance_allocator();
++        }
+         class.super_class = super_class;
+         class.instance_init = instance_init;
+         class.traits = OnceLock::from(traits);
+         Class(Gc::new(mc, class))
+     }
+ 
++    /// Create a fully linked class with its class-class (c_class) inheriting from a superclass.
++    pub fn custom_subclass(
++        context: &mut UpdateContext<'gc>,
++        name: QName<'gc>,
++        superclass: Class<'gc>,
++        instance_init: Option<Method<'gc>>,
++    ) -> Result<Self, VTableInitError> {
++        let mc = context.gc();
++
++        let mut local_name_buf = WString::from(name.local_name().as_wstr());
++        local_name_buf.push_char('$');
++        let c_name = QName::new(name.namespace(), AvmString::new(mc, local_name_buf));
++
++        let mut i_class = ClassData::empty(name);
++        i_class.super_class = Some(superclass);
++        i_class.instance_allocator = superclass.instance_allocator();
++        i_class.instance_init = instance_init.or_else(|| superclass.instance_init());
++        i_class.call_handler = superclass.call_handler();
++        i_class.traits = OnceLock::from(Box::default());
++        let i_class = Class(Gc::new(mc, i_class));
++
++        let mut c_class = ClassData::empty(c_name);
++        c_class.super_class = Some(context.avm2.class_defs().class);
++        c_class.attributes = Cell::new(ClassAttributes::FINAL);
++        c_class.instance_init = superclass.c_class().and_then(|c| c.instance_init());
++        c_class.traits = OnceLock::from(Box::default());
++        let c_class = Class(Gc::new(mc, c_class));
++
++        i_class.link_with_c_class(mc, c_class);
++
++        i_class.init_vtable_with_interfaces(context, Box::new([]))?;
++        c_class.init_vtable_with_interfaces(context, Box::new([]))?;
++
++        Ok(i_class)
++    }
++
+     pub fn add_application(self, mc: &Mutation<'gc>, param: Option<Class<'gc>>, cls: Class<'gc>) {
+         let write = unlock!(Gc::write(mc, self.0), ClassData, cell);
+         write.borrow_mut().applications.insert(param, cls);
+diff --git a/ruffle-main/core/src/avm2/events.rs b/ruffle-main/core/src/avm2/events.rs
+index 050f0ebf..00c3a464 100644
+--- a/ruffle-main/core/src/avm2/events.rs
++++ b/ruffle-main/core/src/avm2/events.rs
+@@ -233,6 +233,11 @@ impl<'gc> DispatchList<'gc> {
+ 
+         self.get_event_priority_mut(event, priority)
+             .push(new_handler);
++
++        if &event == b"enterFrame" {
++            crate::diagnostics::ENTER_FRAME_ADDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            crate::diagnostics::ENTER_FRAME_ACTIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        }
+     }
+ 
+     /// Remove an event handler from this dispatch list.
+@@ -250,6 +255,10 @@ impl<'gc> DispatchList<'gc> {
+         for set in self.get_event_mut(event).values_mut() {
+             if let Some(pos) = set.iter().position(|h| *h == old_handler) {
+                 set.remove(pos);
++                if &event == b"enterFrame" {
++                    crate::diagnostics::ENTER_FRAME_REMOVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                    crate::diagnostics::ENTER_FRAME_ACTIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
++                }
+             }
+         }
+     }
+@@ -267,6 +276,32 @@ impl<'gc> DispatchList<'gc> {
+         false
+     }
+ 
++    /// Determine if there are any mouse event listeners in this dispatch list.
++    pub fn has_mouse_listeners(&self) -> bool {
++        for (event_name, sheaf) in &self.0 {
++            let w = event_name.as_wstr();
++            let is_mouse = w == b"click"
++                || w == b"mouseDown"
++                || w == b"mouseUp"
++                || w == b"mouseMove"
++                || w == b"mouseOver"
++                || w == b"mouseOut"
++                || w == b"rollOver"
++                || w == b"rollOut"
++                || w == b"doubleClick"
++                || w == b"middleClick"
++                || w == b"middleMouseDown"
++                || w == b"middleMouseUp"
++                || w == b"rightClick"
++                || w == b"rightMouseDown"
++                || w == b"rightMouseUp";
++            if is_mouse && sheaf.values().any(|set| !set.is_empty()) {
++                return true;
++            }
++        }
++        false
++    }
++
+     /// Yield the event handlers on this dispatch list for a given event.
+     ///
+     /// Event handlers will be yielded in the order they are intended to be
+diff --git a/ruffle-main/core/src/avm2/globals/flash/system.rs b/ruffle-main/core/src/avm2/globals/flash/system.rs
+index d2622081..a500e60c 100644
+--- a/ruffle-main/core/src/avm2/globals/flash/system.rs
++++ b/ruffle-main/core/src/avm2/globals/flash/system.rs
+@@ -4,6 +4,9 @@
+ use crate::avm2::function::FunctionArgs;
+ pub mod application_domain;
+ pub mod capabilities;
++pub mod mogobe_item_compat;
++pub mod mogobe_platform_compat;
++pub mod mogobe_room_compat;
+ pub mod security;
+ pub mod security_domain;
+ pub mod system;
+diff --git a/ruffle-main/core/src/avm2/globals/flash/system/application_domain.rs b/ruffle-main/core/src/avm2/globals/flash/system/application_domain.rs
+index 1e6b52fb..01cd11da 100644
+--- a/ruffle-main/core/src/avm2/globals/flash/system/application_domain.rs
++++ b/ruffle-main/core/src/avm2/globals/flash/system/application_domain.rs
+@@ -1,5 +1,10 @@
+ //! `flash.system.ApplicationDomain` class
+ 
++use super::mogobe_item_compat::{is_mogobe_item_compat_candidate, resolve_mogobe_item_compat};
++use super::mogobe_platform_compat::{
++    is_mogobe_platform_compat_candidate_str, resolve_mogobe_platform_compat,
++};
++use super::mogobe_room_compat::{is_mogobe_room_compat_candidate, resolve_mogobe_room_compat};
+ use crate::avm2::activation::Activation;
+ use crate::avm2::function::FunctionArgs;
+ use crate::avm2::object::{DomainObject, Object, VectorObject};
+@@ -78,10 +83,24 @@ pub fn get_definition<'gc>(
+     if let Some(appdomain) = this.as_application_domain() {
+         let name = args.get_string_non_null(activation, 0, "definitionName")?;
+ 
+-        return appdomain.get_defined_value_handling_vector(activation, name);
++        match appdomain.get_defined_value_handling_vector(activation, name) {
++            Ok(val) => Ok(val),
++            Err(err) => {
++                if let Some(compat_class) = resolve_mogobe_item_compat(activation, appdomain, name)? {
++                    return Ok(compat_class.into());
++                }
++                if let Some(compat_class) = resolve_mogobe_room_compat(activation, appdomain, name)? {
++                    return Ok(compat_class.into());
++                }
++                if let Some(compat_class) = resolve_mogobe_platform_compat(activation, appdomain, name)? {
++                    return Ok(compat_class.into());
++                }
++                Err(err)
++            }
++        }
++    } else {
++        Ok(Value::Undefined)
+     }
+-
+-    Ok(Value::Undefined)
+ }
+ 
+ /// `hasDefinition` method
+@@ -99,7 +118,19 @@ pub fn has_definition<'gc>(
+         };
+ 
+         let result = appdomain.has_defined_value_handling_vector(activation, name);
+-        return Ok(result.into());
++        if result {
++            return Ok(true.into());
++        }
++        if is_mogobe_item_compat_candidate(activation, name) {
++            return Ok(true.into());
++        }
++        if is_mogobe_room_compat_candidate(activation, name) {
++            return Ok(true.into());
++        }
++        if is_mogobe_platform_compat_candidate_str(activation, name) {
++            return Ok(true.into());
++        }
++        return Ok(false.into());
+     }
+ 
+     Ok(Value::Undefined)
+diff --git a/ruffle-main/core/src/avm2/globals/flash/utils/timer.rs b/ruffle-main/core/src/avm2/globals/flash/utils/timer.rs
+index c8b56b5b..134f81a1 100644
+--- a/ruffle-main/core/src/avm2/globals/flash/utils/timer.rs
++++ b/ruffle-main/core/src/avm2/globals/flash/utils/timer.rs
+@@ -21,6 +21,7 @@ pub fn stop<'gc>(
+     if id != -1 {
+         activation.context.timers.remove(id);
+         this.set_slot(slots::_TIMER_ID, (-1).into(), activation)?;
++        crate::diagnostics::TIMERS_STOPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+     }
+ 
+     Ok(Value::Undefined)
+@@ -57,6 +58,7 @@ pub fn start<'gc>(
+             false,
+         );
+         this.set_slot(slots::_TIMER_ID, id.into(), activation)?;
++        crate::diagnostics::TIMERS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+     }
+     Ok(Value::Undefined)
+ }
+diff --git a/ruffle-main/core/src/avm2/method.rs b/ruffle-main/core/src/avm2/method.rs
+index 4363024d..ec405764 100644
+--- a/ruffle-main/core/src/avm2/method.rs
++++ b/ruffle-main/core/src/avm2/method.rs
+@@ -238,6 +238,34 @@ impl<'gc> Method<'gc> {
+         )))
+     }
+ 
++    /// Construct a synthetic native method for dynamically generated classes.
++    pub fn synthetic_native(
++        activation: &mut Activation<'_, 'gc>,
++        txunit: TranslationUnit<'gc>,
++        abc_method: u32,
++        native_method: NativeMethodImpl,
++    ) -> Self {
++        Self(Gc::new(
++            activation.gc(),
++            MethodData {
++                txunit,
++                abc: txunit.abc(),
++                abc_method,
++                abc_method_body: None,
++                method_kind: MethodKind::Native {
++                    native_method,
++                    fast_call: false,
++                },
++                signature: Vec::new(),
++                return_type: None,
++                resolved_info: OnceLock::new(),
++                association: OnceLock::new(),
++                is_function: false,
++                is_unchecked: true,
++            },
++        ))
++    }
++
+     /// Get the underlying ABC file.
+     pub fn abc(self) -> Rc<AbcFile> {
+         self.0.txunit.abc()
+diff --git a/ruffle-main/core/src/avm2/object/class_object.rs b/ruffle-main/core/src/avm2/object/class_object.rs
+index a9ed61c7..b89b43d2 100644
+--- a/ruffle-main/core/src/avm2/object/class_object.rs
++++ b/ruffle-main/core/src/avm2/object/class_object.rs
+@@ -132,7 +132,7 @@ impl<'gc> ClassObject<'gc> {
+     /// ClassObject creation, since Vector.<T> classes have their methods
+     /// already bound and do not need to be validated or have their initializers
+     /// run.
+-    fn from_class_partial(
++    pub(crate) fn from_class_partial(
+         activation: &mut Activation<'_, 'gc>,
+         class: Class<'gc>,
+         superclass_object: Option<ClassObject<'gc>>,
+diff --git a/ruffle-main/core/src/avm2/object/dispatch_object.rs b/ruffle-main/core/src/avm2/object/dispatch_object.rs
+index 3cb0afa7..2ca3e7fd 100644
+--- a/ruffle-main/core/src/avm2/object/dispatch_object.rs
++++ b/ruffle-main/core/src/avm2/object/dispatch_object.rs
+@@ -80,6 +80,10 @@ impl<'gc> DispatchObject<'gc> {
+     pub fn dispatch_mut(self, mc: &Mutation<'gc>) -> RefMut<'gc, DispatchList<'gc>> {
+         unlock!(Gc::write(mc, self.0), DispatchObjectData, dispatch).borrow_mut()
+     }
++
++    pub fn has_mouse_listeners(&self) -> bool {
++        self.0.dispatch.borrow().has_mouse_listeners()
++    }
+ }
+ 
+ impl<'gc> TObject<'gc> for DispatchObject<'gc> {
+diff --git a/ruffle-main/core/src/backend/audio.rs b/ruffle-main/core/src/backend/audio.rs
+index 0f63f6b1..f1f45727 100644
+--- a/ruffle-main/core/src/backend/audio.rs
++++ b/ruffle-main/core/src/backend/audio.rs
+@@ -386,6 +386,10 @@ impl<'gc> AudioManager<'gc> {
+         }
+     }
+ 
++    pub fn num_active_sounds(&self) -> usize {
++        self.sounds.len()
++    }
++
+     /// Update state of active sounds. Should be called once per frame.
+     pub fn update_sounds(context: &mut UpdateContext<'gc>) {
+         let mc = context.gc();
+diff --git a/ruffle-main/core/src/backend/navigator.rs b/ruffle-main/core/src/backend/navigator.rs
+index 9d02cc0a..d29c3fa0 100644
+--- a/ruffle-main/core/src/backend/navigator.rs
++++ b/ruffle-main/core/src/backend/navigator.rs
+@@ -325,6 +325,39 @@ pub trait NavigatorBackend: Any {
+     /// This seems highly limiting.
+     fn spawn_future(&mut self, future: OwnedFuture<(), Error>);
+ 
++    /// Synchronously fetch an asset by URL (used by LocalGobe item compatibility).
++    fn fetch_sync(&self, _url: &str) -> Option<Vec<u8>> {
++        None
++    }
++
+     /// Handle any context specific pre-processing
+     ///
+     /// Changing http -> https for example. This function may alter any part of the
+diff --git a/ruffle-main/core/src/display_object/container.rs b/ruffle-main/core/src/display_object/container.rs
+index 61b8459b..b415bbbe 100644
+--- a/ruffle-main/core/src/display_object/container.rs
++++ b/ruffle-main/core/src/display_object/container.rs
+@@ -558,17 +558,25 @@ pub trait TDisplayObjectContainer<'gc>:
+ 
+             child.pre_render(context);
+ 
++            let is_script_child = child.placed_by_avm2_script();
++
+             // Check if we need to pop off a mask.
+-            // This must be a while loop because multiple masks can be popped
+-            // at the same depth.
+-            while clip_depth > 0 && depth > clip_depth {
+-                // Clear the mask stencil and pop the mask.
+-                let (prev_clip_depth, clip_child) = clip_depth_stack.pop().unwrap();
+-                clip_depth = prev_clip_depth;
+-                context.commands.deactivate_mask();
+-                clip_child.render(context);
+-                context.commands.pop_mask();
++            // A mask must be popped if:
++            // 1. The child was placed by AVM2 script (timeline clipDepth never masks AVM2 script-added children).
++            // 2. The child's depth is strictly greater than clip_depth (timeline masked range has ended).
++            // 3. The child's depth is less than or equal to the mask's own depth (not within (mask_depth + 1)..=clip_depth).
++            while let Some(&(prev_clip_depth, clip_child)) = clip_depth_stack.last() {
++                if is_script_child || depth > clip_depth || depth <= clip_child.depth() {
++                    let (_, clip_child) = clip_depth_stack.pop().unwrap();
++                    clip_depth = prev_clip_depth;
++                    context.commands.deactivate_mask();
++                    clip_child.render(context);
++                    context.commands.pop_mask();
++                } else {
++                    break;
++                }
+             }
++
+             if child.clip_depth() > 0 && child.allow_as_mask() {
+                 // Push and render the mask.
+                 clip_depth_stack.push((clip_depth, child));
+diff --git a/ruffle-main/core/src/display_object/movie_clip.rs b/ruffle-main/core/src/display_object/movie_clip.rs
+index 8f240cd7..4006391a 100644
+--- a/ruffle-main/core/src/display_object/movie_clip.rs
++++ b/ruffle-main/core/src/display_object/movie_clip.rs
+@@ -323,6 +323,13 @@ impl<'gc> MovieClip<'gc> {
+         MovieClip(Gc::new(context.gc(), data))
+     }
+ 
++    pub fn new_for_movie(context: &mut UpdateContext<'gc>, movie: Arc<SwfMovie>) -> Self {
++        let shared = MovieClipShared::for_full_movie(movie, None, None);
++        let data = MovieClipData::new(shared, context.gc());
++        data.flags.set(MovieClipFlags::PLAYING);
++        MovieClip(Gc::new(context.gc(), data))
++    }
++
+     /// Construct a movie clip that represents the root movie
+     /// for the entire `Player`.
+     pub fn player_root_movie(
+@@ -2877,6 +2884,75 @@ impl<'gc> TDisplayObjectContainer<'gc> for MovieClip<'gc> {
+     }
+ }
+ 
++fn is_dragged_or_descendant<'gc>(
++    mut obj: DisplayObject<'gc>,
++    drag_display_object: DisplayObject<'gc>,
++) -> bool {
++    loop {
++        if DisplayObject::ptr_eq(obj, drag_display_object) {
++            return true;
++        }
++        if let Some(parent) = obj.parent() {
++            obj = parent;
++        } else {
++            return false;
++        }
++    }
++}
++
++fn object_has_mouse_listeners<'gc>(obj: DisplayObject<'gc>) -> bool {
++    use crate::avm2::object::TObject;
++    if let Some(stage_obj) = obj.object2() {
++        if let crate::avm2::Value::Object(dispatch_val) =
++            stage_obj.get_slot(crate::avm2::globals::slots::flash_events_event_dispatcher::DISPATCH_LIST)
++        {
++            if let Some(dispatch_obj) = dispatch_val.as_dispatch_object() {
++                if dispatch_obj.has_mouse_listeners() {
++                    return true;
++                }
++            }
++        }
++    }
++    false
++}
++
++fn tree_has_mouse_listeners<'gc>(obj: DisplayObject<'gc>) -> bool {
++    if object_has_mouse_listeners(obj) {
++        return true;
++    }
++    if let Some(container) = obj.as_container() {
++        for child in container.iter_render_list() {
++            if tree_has_mouse_listeners(child) {
++                return true;
++            }
++        }
++    }
++    false
++}
++
++fn should_skip_dragged_object<'gc>(
++    obj: DisplayObject<'gc>,
++    context: &UpdateContext<'gc>,
++) -> bool {
++    if let Some(ref drag_object) = *context.drag_object {
++        if is_dragged_or_descendant(obj, drag_object.display_object) {
++            // Dragged display objects that listen to mouse events (e.g. crosshair targeting reticles)
++            // are interactive targets and must participate in mouse picking.
++            if tree_has_mouse_listeners(drag_object.display_object) {
++                return false;
++            }
++
++            let is_pressed_drag = context
++                .mouse_data
++                .pressed
++                .map(|p| is_dragged_or_descendant(p.as_displayobject(), drag_object.display_object))
++                .unwrap_or(false);
++            return !is_pressed_drag;
++        }
++    }
++    false
++}
++
+ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
+     fn raw_interactive(self) -> Gc<'gc, InteractiveObjectBase<'gc>> {
+         HasPrefixField::as_prefix_gc(self.0)
+@@ -2994,6 +3070,10 @@ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
+             return None;
+         }
+ 
++        if should_skip_dragged_object(self.into(), context) {
++            return None;
++        }
++
+         // A sibling's `hitArea` getter may have removed this clip earlier
+         // in this same pick (the parent iterates a snapshot of its render
+         // list). In captures of such a removal, Flash Player froze
+@@ -3067,6 +3147,9 @@ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
+             let check_non_interactive = !require_button_mode;
+ 
+             for child in self.iter_render_list().rev() {
++                if should_skip_dragged_object(child, context) {
++                    continue;
++                }
+                 if child.clip_depth() > 0 {
+                     if result.is_some() && child.clip_depth() >= hit_depth {
+                         if child.hit_test_shape(context, point, HitTestOptions::MOUSE_PICK) {
+@@ -3129,6 +3212,10 @@ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
+             return Avm2MousePick::Miss;
+         }
+ 
++        if should_skip_dragged_object(self.into(), context) {
++            return Avm2MousePick::Miss;
++        }
++
+         if self.visible() {
+             let this: InteractiveObject<'gc> = self.into();
+             let Some(local_matrix) = self.global_to_local_matrix() else {
+@@ -3186,6 +3273,10 @@ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
+                     continue;
+                 }
+ 
++                if should_skip_dragged_object(child, context) {
++                    continue;
++                }
++
+                 let mut res = if let Some(child) = child.as_interactive() {
+                     if child.as_displayobject().movie().is_action_script_3() {
+                         child.mouse_pick_avm2(context, point, require_button_mode)
+diff --git a/ruffle-main/core/src/display_object/stage.rs b/ruffle-main/core/src/display_object/stage.rs
+index 8eecdd8f..eeeed9cb 100644
+--- a/ruffle-main/core/src/display_object/stage.rs
++++ b/ruffle-main/core/src/display_object/stage.rs
+@@ -275,6 +275,11 @@ impl<'gc> Stage<'gc> {
+     /// This setting is currently ignored in Ruffle.
+     /// Used by AVM1 `stage.quality` and AVM2 `Stage.quality` properties.
+     pub fn set_quality(self, context: &mut UpdateContext<'gc>, quality: StageQuality) {
++        tracing::info!(
++            "[LOCALGOBE_CHECKPOINT:STAGE_QUALITY_CHANGE] quality={:?} timestamp={:?}",
++            quality,
++            web_time::Instant::now()
++        );
+         self.0.quality.set(quality);
+         self.0.use_bitmap_downsampling.set(matches!(
+             quality,
+diff --git a/ruffle-main/core/src/font.rs b/ruffle-main/core/src/font.rs
+index d4971093..bf35f4b6 100644
+--- a/ruffle-main/core/src/font.rs
++++ b/ruffle-main/core/src/font.rs
+@@ -302,6 +302,14 @@ impl FontMetrics {
+ #[collect(no_drop)]
+ pub struct Font<'gc>(Gc<'gc, FontData>);
+ 
++impl<'gc> PartialEq for Font<'gc> {
++    fn eq(&self, other: &Self) -> bool {
++        Gc::ptr_eq(self.0, other.0)
++    }
++}
++
++impl<'gc> Eq for Font<'gc> {}
++
+ #[derive(Debug, Collect)]
+ #[collect(require_static)]
+ struct FontData {
+@@ -321,6 +329,9 @@ struct FontData {
+ }
+ 
+ impl<'gc> Font<'gc> {
++    pub fn ptr_eq(self, other: Self) -> bool {
++        Gc::ptr_eq(self.0, other.0)
++    }
+     pub fn from_font_file(
+         gc_context: &Mutation<'gc>,
+         descriptor: FontDescriptor,
+diff --git a/ruffle-main/core/src/html/layout.rs b/ruffle-main/core/src/html/layout.rs
+index ed64c23f..915ad845 100644
+--- a/ruffle-main/core/src/html/layout.rs
++++ b/ruffle-main/core/src/html/layout.rs
+@@ -540,7 +540,7 @@ impl<'a, 'gc> LayoutBuilder<'a, 'gc> {
+ 
+         // Note that the SWF can still contain a DefineFont tag with no glyphs/layout info in this case (see #451).
+         // In an ideal world, device fonts would search for a matching font on the system and render it in some way.
+-        if self.font_type.is_embedded()
++        let primary_font = if self.font_type.is_embedded()
+             && let Some(font) = self
+                 .context
+                 .get_embedded_font_by_name(
+@@ -552,84 +552,98 @@ impl<'a, 'gc> LayoutBuilder<'a, 'gc> {
+                 )
+                 .filter(|f| f.has_glyphs())
+         {
+-            return FontSet::from_one_font(self.context.gc(), font);
+-        }
+-        // TODO: If set to use embedded fonts and we couldn't find any matching font, show nothing
+-        // However - at time of writing, we don't support DefineFont4. If we matched this behaviour,
+-        // then a bunch of SWFs would just show no text suddenly.
+-        // return new_empty_font(self.context, span, self.font_type);
+-
+-        // Specifying multiple font names is supported only for device fonts.
+-        let font_names: Vec<&str> = font_name.split(",").collect();
+-        for font_name in &font_names {
+-            let font_name = font_name.trim();
+-
+-            // Check if the font name is one of the known default fonts.
+-            if let Some(default_font) = DefaultFont::from_name(font_name) {
+-                let fonts =
+-                    self.context
+-                        .default_font(default_font, span.style.bold, span.style.italic);
+-                if let Some(font_sort) = FontSet::from_fonts(self.context.gc(), &fonts) {
+-                    return font_sort;
+-                } else {
+-                    let font_desc = describe_font(span);
+-                    tracing::error!(
+-                        "Known default device font not found: {font_desc}, text will be missing"
+-                    );
+-                    return new_empty_font(self.context, span, self.font_type);
++            Some(font)
++        } else {
++            // Specifying multiple font names is supported only for device fonts.
++            let font_names: Vec<&str> = font_name.split(",").collect();
++            let mut found_font = None;
++            for font_name in &font_names {
++                let font_name = font_name.trim();
++
++                // Check if the font name is one of the known default fonts.
++                if let Some(default_font) = DefaultFont::from_name(font_name) {
++                    let fonts =
++                        self.context
++                            .default_font(default_font, span.style.bold, span.style.italic);
++                    if let Some(&font) = fonts.first() {
++                        found_font = Some(font);
++                        break;
++                    }
++                }
++
++                let fonts = self.context.get_or_sort_device_fonts(
++                    font_name,
++                    span.style.bold,
++                    span.style.italic,
++                );
++                if let Some(&font) = fonts.first() {
++                    found_font = Some(font);
++                    break;
+                 }
+             }
+ 
+-            let fonts = self.context.get_or_sort_device_fonts(
+-                font_name,
+-                span.style.bold,
+-                span.style.italic,
+-            );
+-            if let Some(font_sort) = FontSet::from_fonts(self.context.gc(), &fonts) {
+-                return font_sort;
++            if found_font.is_none() {
++                // We fall back to the default font based on the first font in the list.
++                let font_name = font_names.first().copied().unwrap_or("");
++                let default_font = match font_name {
++                    "Times New Roman" => DefaultFont::Serif,
++                    "Arial" => DefaultFont::Sans,
++                    "Consolas" => DefaultFont::Typewriter,
++                    "Courier" => DefaultFont::Typewriter,
++                    "Courier New" => DefaultFont::Typewriter,
++                    "NSimSun" => DefaultFont::Typewriter,
++                    _ => {
++                        if font_name.contains("Ming") || font_name.contains('明') {
++                            DefaultFont::JapaneseMincho
++                        } else {
++                            DefaultFont::Sans
++                        }
++                    }
++                };
++
++                let fonts = self
++                    .context
++                    .default_font(default_font, span.style.bold, span.style.italic);
++                found_font = fonts.first().copied();
+             }
+-        }
+ 
+-        // TODO We fall back to the default font based on the first font in the list.
+-        //   This is mainly to preserve old behavior, that might change when we
+-        //   implement a proper fallback.
+-        let font_name = font_names.first().copied().unwrap_or("");
+-
+-        // TODO: handle multiple fonts for a definition, each covering different sets of glyphs
+-
+-        // At this point, the font name was neither one of the default
+-        // fonts nor matched any device font. We explicitly handle some of the
+-        // well-known aliases for the default fonts for better compatibility
+-        // with devices that don't have those fonts installed. As a last resort
+-        // we fall back to using sans (like Flash).
+-        let default_font = match font_name {
+-            "Times New Roman" => DefaultFont::Serif,
+-            "Arial" => DefaultFont::Sans,
+-            "Consolas" => DefaultFont::Typewriter,
+-            "Courier" => DefaultFont::Typewriter,
+-            "Courier New" => DefaultFont::Typewriter,
+-            "NSimSun" => DefaultFont::Typewriter,
+-            _ => {
+-                if font_name.contains("Ming") || font_name.contains('明') {
+-                    DefaultFont::JapaneseMincho
+-                } else {
+-                    DefaultFont::Sans
+-                }
++            found_font
++        };
++
++        let main_font = match primary_font {
++            Some(f) => f,
++            None => {
++                let font_desc = describe_font(span);
++                tracing::error!(
++                    "Fallback font not found for: {font_desc}, text will be missing"
++                );
++                return new_empty_font(self.context, span, self.font_type);
+             }
+         };
+ 
+-        let fonts = self
+-            .context
+-            .default_font(default_font, span.style.bold, span.style.italic);
+-        if let Some(font_sort) = FontSet::from_fonts(self.context.gc(), &fonts) {
+-            font_sort
+-        } else {
+-            let font_desc = describe_font(span);
+-            tracing::error!(
+-                "Fallback font not found ({default_font:?}) for: {font_desc}, text will be missing"
+-            );
+-            new_empty_font(self.context, span, self.font_type)
++        let mut fallback_fonts = self.context.fallback_device_fonts();
++        fallback_fonts.sort_by_key(|f| {
++            let d = f.descriptor();
++            let bold_match = d.bold() == span.style.bold;
++            let italic_match = d.italic() == span.style.italic;
++            match (bold_match, italic_match) {
++                (true, true) => 0,
++                (true, false) => 1,
++                (false, true) => 2,
++                (false, false) => 3,
++            }
++        });
++
++        let mut all_fonts = vec![main_font];
++        for f in fallback_fonts {
++            if !all_fonts.contains(&f) {
++                all_fonts.push(f);
++            }
+         }
++
++        FontSet::from_fonts(self.context.gc(), &all_fonts).unwrap_or_else(|| {
++            new_empty_font(self.context, span, self.font_type)
++        })
+     }
+ 
+     /// Append text to the current line of the ongoing layout operation.
+@@ -672,7 +686,7 @@ impl<'a, 'gc> LayoutBuilder<'a, 'gc> {
+         let descent = metrics.descent(params.height());
+         let box_origin = self.cursor - (Twips::ZERO, ascent).into();
+ 
+-        let mut new_box = LayoutBox::from_text(text, start, end, font_set, span);
++        let mut new_box = LayoutBox::from_text(text, start, end, font_set, span, self.font_type);
+         let text_width = new_box.text_width();
+         new_box.bounds = BoxBounds::from_position_and_size(
+             box_origin,
+@@ -1252,6 +1266,7 @@ impl<'gc> LayoutBox<'gc> {
+         end: usize,
+         font_set: FontSet<'gc>,
+         span: &TextSpan,
++        font_type: FontType,
+     ) -> Self {
+         let params = EvalParameters::from_span(span);
+         let mut char_end_pos = Vec::with_capacity(end - start);
+@@ -1264,11 +1279,15 @@ impl<'gc> LayoutBox<'gc> {
+             char_end_pos.push(x + advance);
+         });
+ 
+-        let (visual_char_bounds, visual_char_rtl) = if font_set.font_type().is_device() {
+-            visual_bidi_positions(text, &char_ranges, &char_end_pos)
+-        } else {
+-            (None, None)
+-        };
++        // Classic device-font fields and modern Flash Text Engine (FTE / CFF) fields
++        // need visual BiDi layout. Classic embedded-font (DefineFont) content may
++        // already be visually reordered by the movie itself (e.g. via RTL.as in ActionScript).
++        let (visual_char_bounds, visual_char_rtl) =
++            if font_type == FontType::Device || font_type == FontType::EmbeddedCFF {
++                visual_bidi_positions(text, &char_ranges, &char_end_pos)
++            } else {
++                (None, None)
++            };
+ 
+         Self {
+             bounds: Default::default(),
+diff --git a/ruffle-main/core/src/html/layout/context.rs b/ruffle-main/core/src/html/layout/context.rs
+index 4fc8fc4c..57731fb5 100644
+--- a/ruffle-main/core/src/html/layout/context.rs
++++ b/ruffle-main/core/src/html/layout/context.rs
+@@ -31,6 +31,9 @@ pub trait LayoutContext<'gc> {
+         is_bold: bool,
+         is_italic: bool,
+     ) -> Vec<Font<'gc>>;
++
++    /// Returns available fallback device fonts.
++    fn fallback_device_fonts(&mut self) -> Vec<Font<'gc>>;
+ }
+ 
+ impl<'gc> LayoutContext<'gc> for UpdateContext<'gc> {
+@@ -82,6 +85,10 @@ impl<'gc> LayoutContext<'gc> for UpdateContext<'gc> {
+             self.gc_context,
+         )
+     }
++
++    fn fallback_device_fonts(&mut self) -> Vec<Font<'gc>> {
++        self.library.device_fonts()
++    }
+ }
+ 
+ impl<'gc> LayoutContext<'gc> for RenderContext<'_, 'gc> {
+@@ -133,4 +140,8 @@ impl<'gc> LayoutContext<'gc> for RenderContext<'_, 'gc> {
+             self.gc_context,
+         )
+     }
++
++    fn fallback_device_fonts(&mut self) -> Vec<Font<'gc>> {
++        self.library.device_fonts()
++    }
+ }
+diff --git a/ruffle-main/core/src/lib.rs b/ruffle-main/core/src/lib.rs
+index d76c1cba..8a23a39f 100644
+--- a/ruffle-main/core/src/lib.rs
++++ b/ruffle-main/core/src/lib.rs
+@@ -54,6 +54,7 @@ pub mod compatibility_rules;
+ pub mod config;
+ #[cfg(feature = "egui")]
+ pub mod debug_ui;
++pub mod diagnostics;
+ pub mod external;
+ pub mod i18n;
+ pub mod stub;
+diff --git a/ruffle-main/core/src/library.rs b/ruffle-main/core/src/library.rs
+index 74188cd5..babb5194 100644
+--- a/ruffle-main/core/src/library.rs
++++ b/ruffle-main/core/src/library.rs
+@@ -764,6 +764,11 @@ impl<'gc> Library<'gc> {
+             font.sweep_caches();
+         }
+     }
++
++    /// Returns all registered device fonts.
++    pub fn device_fonts(&self) -> Vec<Font<'gc>> {
++        self.device_fonts.all()
++    }
+ }
+ 
+ #[derive(Collect, Default)]
+diff --git a/ruffle-main/core/src/orphan_manager.rs b/ruffle-main/core/src/orphan_manager.rs
+index a231dc08..a025fe54 100644
+--- a/ruffle-main/core/src/orphan_manager.rs
++++ b/ruffle-main/core/src/orphan_manager.rs
+@@ -21,6 +21,10 @@ pub struct OrphanManager<'gc> {
+ }
+ 
+ impl<'gc> OrphanManager<'gc> {
++    pub fn orphans(&self) -> &[DisplayObjectWeak<'gc>] {
++        &self.orphans
++    }
++
+     fn orphans_mut(&mut self) -> &mut Vec<DisplayObjectWeak<'gc>> {
+         Rc::make_mut(&mut self.orphans)
+     }
+diff --git a/ruffle-main/core/src/player.rs b/ruffle-main/core/src/player.rs
+index 675ef3a7..428fd67e 100644
+--- a/ruffle-main/core/src/player.rs
++++ b/ruffle-main/core/src/player.rs
+@@ -611,6 +611,7 @@ impl Player {
+             StreamManager::tick(context, dt);
+         });
+         self.audio.tick();
++        crate::diagnostics::record_tick_interval(dt.as_millis());
+     }
+ 
+     pub fn time_til_next_timer(&self) -> Option<f64> {
+@@ -2071,9 +2072,16 @@ impl Player {
+ 
+         self.update(|context| {
+             // TODO: Is this order correct?
++            let avm2_start = Instant::now();
+             run_all_phases_avm2(context);
++            crate::diagnostics::record_avm2_duration(avm2_start.elapsed().as_secs_f64() * 1000.0);
++
+             Avm1::run_frame(context);
++
++            let audio_start = Instant::now();
+             AudioManager::update_sounds(context);
++            crate::diagnostics::record_audio_duration(audio_start.elapsed().as_secs_f64() * 1000.0);
++
+             LocalConnections::update_connections(context);
+ 
+             // Only run the current list of callbacks - any callbacks added during callback execution
+@@ -2088,6 +2096,7 @@ impl Player {
+ 
+     #[instrument(level = "debug", skip_all)]
+     pub fn render(&mut self) {
++        let render_start = Instant::now();
+         let invalidated = self.enter_arena(|_, gc_root, _| gc_root.stage.invalidated());
+ 
+         if invalidated {
+@@ -2143,6 +2152,7 @@ impl Player {
+             .submit_frame(background_color, commands, cache_draws);
+ 
+         self.needs_render = false;
++        crate::diagnostics::record_render_duration(render_start.elapsed().as_secs_f64() * 1000.0);
+     }
+ 
+     /// The current frame of the main timeline, if available.
+@@ -2180,6 +2190,21 @@ impl Player {
+         &mut *self.renderer
+     }
+ 
++    pub fn get_diagnostic_census(&mut self) -> String {
++        self.mutate_with_update_context(|context| {
++            crate::diagnostics::take_display_census_json(context)
++        })
++    }
++
++    pub fn call_game_diagnostic_method(&mut self, method_name: &str, level: Option<f64>) -> String {
++        self.mutate_with_update_context(|context| {
++            match crate::diagnostics::call_game_method(context, method_name, level) {
++                Ok(s) => s,
++                Err(e) => format!("ERROR: {}", e),
++            }
++        })
++    }
++
+     pub fn storage(&self) -> &dyn StorageBackend {
+         &*self.storage
+     }
+diff --git a/ruffle-main/core/src/timer.rs b/ruffle-main/core/src/timer.rs
+index abb1160f..144cc161 100644
+--- a/ruffle-main/core/src/timer.rs
++++ b/ruffle-main/core/src/timer.rs
+@@ -238,6 +238,10 @@ impl<'gc> Timers<'gc> {
+         self.timers.is_empty()
+     }
+ 
++    pub fn len(&self) -> usize {
++        self.timers.len()
++    }
++
+     /// Whether a timer with the given ID exists.
+     pub fn timer_exists(&self, id: i32) -> bool {
+         self.timers.iter().any(|t| t.id == id)
+@@ -256,6 +260,7 @@ impl<'gc> Timers<'gc> {
+         // The counter has to be incremented first, because Flash Player never assigns timer ID 0,
+         // and neither should we, as some content uses it as an initial "not yet set up" value.
+         self.timer_counter = self.timer_counter.wrapping_add(1);
++        crate::diagnostics::TIMERS_CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+         let id = self.timer_counter;
+         let timer = Timer {
+             id,
+diff --git a/ruffle-main/render/canvas/src/lib.rs b/ruffle-main/render/canvas/src/lib.rs
+index 11d5425c..7c6fcdc6 100644
+--- a/ruffle-main/render/canvas/src/lib.rs
++++ b/ruffle-main/render/canvas/src/lib.rs
+@@ -189,7 +189,7 @@ impl BitmapData {
+             .expect("get_context method must return a value")
+             .dyn_into()
+             .expect("get_context method returned something other than a CanvasRenderingContext2d");
+-        context.put_image_data(&image_data, 0, 0).into_js_result()?;
++        context.put_image_data(&image_data, 0 as _, 0 as _).into_js_result()?;
+         Ok(BitmapData {
+             image_data,
+             canvas,
+@@ -205,7 +205,7 @@ impl BitmapData {
+         self.canvas.set_width(bitmap.width());
+         self.canvas.set_height(bitmap.height());
+         self.context
+-            .put_image_data(&image_data, 0, 0)
++            .put_image_data(&image_data, 0 as _, 0 as _)
+             .into_js_result()?;
+         Ok(())
+     }
+diff --git a/ruffle-main/web/packages/core/src/internal/player/inner.tsx b/ruffle-main/web/packages/core/src/internal/player/inner.tsx
+index 1fb7b06f..87dbc856 100644
+--- a/ruffle-main/web/packages/core/src/internal/player/inner.tsx
++++ b/ruffle-main/web/packages/core/src/internal/player/inner.tsx
+@@ -741,6 +741,30 @@ export class InnerPlayer {
+         });
+ 
+         this.rendererDebugInfo = this.instance!.renderer_debug_info();
++        (window as any).__ruffleGetDiagnosticCensus = () => {
++            try {
++                const res = (this.instance as any)?.get_diagnostic_census();
++                if (res === null || res === undefined) {
++                    (window as any).__ruffleDiagError = "get_diagnostic_census returned null/undefined";
++                }
++                return res;
++            } catch (e: any) {
++                (window as any).__ruffleDiagError = "Exception: " + (e?.message || e);
++                return null;
++            }
++        };
++        (window as any).__ruffleCallGameMethod = (method: string, level?: number) => {
++            try {
++                return (this.instance as any)?.call_game_method(method, level !== undefined ? level : null);
++            } catch (e: any) {
++                return "ERROR: " + e.message;
++            }
++        };
++        (window as any).__ruffleSetStageQuality = (quality: string) => {
++            try {
++                (this.instance as any)?.set_quality(quality);
++            } catch {}
++        };
+ 
+         if (this.rendererDebugInfo.includes("Adapter Device Type: Cpu")) {
+             this.container.addEventListener(
+diff --git a/ruffle-main/web/src/lib.rs b/ruffle-main/web/src/lib.rs
+index 87d6f014..00e81309 100644
+--- a/ruffle-main/web/src/lib.rs
++++ b/ruffle-main/web/src/lib.rs
+@@ -373,6 +373,28 @@ impl RuffleHandle {
+             .unwrap_or(JsValue::NULL)
+     }
+ 
++    pub fn get_diagnostic_census(&self) -> JsValue {
++        self.with_core_mut(|core| {
++            let json = core.get_diagnostic_census();
++            JsValue::from_str(&json)
++        })
++        .unwrap_or(JsValue::NULL)
++    }
++
++    pub fn call_game_method(&self, method_name: String, level: Option<f64>) -> JsValue {
++        self.with_core_mut(|core| {
++            let res = core.call_game_diagnostic_method(&method_name, level);
++            JsValue::from_str(&res)
++        })
++        .unwrap_or(JsValue::NULL)
++    }
++
++    pub fn set_quality(&self, quality: String) {
++        if let Ok(q) = quality.parse::<ruffle_render::quality::StageQuality>() {
++            let _ = self.with_core_mut(|core| core.set_quality(q));
++        }
++    }
++
+     pub fn renderer_name(&self) -> JsValue {
+         self.with_core(|core| JsValue::from_str(core.renderer().name()))
+             .unwrap_or(JsValue::NULL)
+diff --git a/ruffle-main/web/src/navigator.rs b/ruffle-main/web/src/navigator.rs
+index 8438d174..2edc049f 100644
+--- a/ruffle-main/web/src/navigator.rs
++++ b/ruffle-main/web/src/navigator.rs
+@@ -491,6 +491,20 @@ impl NavigatorBackend for WebNavigatorBackend {
+         url
+     }
+ 
++    fn fetch_sync(&self, url: &str) -> Option<Vec<u8>> {
++        let window = web_sys::window()?;
++        let func = js_sys::Reflect::get(&window, &"localGobeLoadAssetSync".into()).ok()?;
++        if func.is_function() {
++            let func = func.dyn_into::<js_sys::Function>().ok()?;
++            let res = func.call1(&window, &JsValue::from_str(url)).ok()?;
++            if !res.is_null() && !res.is_undefined() {
++                let uint8 = js_sys::Uint8Array::new(&res);
++                return Some(uint8.to_vec());
++            }
++        }
++        None
++    }
++
+     fn connect_socket(
+         &mut self,
+         host: String,

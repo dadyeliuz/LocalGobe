@@ -1,0 +1,263 @@
+{
+  "schema": "localgobe-room-music-manual-v1",
+  "rooms": {
+    "20": {
+      "status": "MAPPED",
+      "rbs": "TelAviv.mp3",
+      "sha256": "b5dd31226d53d2b4ea7bb39ecd819fb7fe7a8bd275ab3ef0eb23fcca111a95e8",
+      "notes": ""
+    },
+    "50": {
+      "status": "MAPPED",
+      "rbs": "telaviv_night.mp3",
+      "sha256": "fd04d7e3680407016611ec90b1eaba25488a3d73c4f64d68fad9769617b754ec",
+      "notes": ""
+    },
+    "60": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "70": {
+      "status": "MAPPED",
+      "rbs": "KingsRoad.mp3",
+      "sha256": "b5dd31226d53d2b4ea7bb39ecd819fb7fe7a8bd275ab3ef0eb23fcca111a95e8",
+      "notes": "דרך המלך - אותו בינארי, filename שונה"
+    },
+    "100": {
+      "status": "MAPPED",
+      "rbs": "AzrieliStore.mp3",
+      "sha256": "b5dd31226d53d2b4ea7bb39ecd819fb7fe7a8bd275ab3ef0eb23fcca111a95e8",
+      "notes": ""
+    },
+    "110": {
+      "status": "MAPPED",
+      "rbs": "Eilat.mp3",
+      "sha256": "96dcebfef1a235ef9ecf46fde695f7556f0d799681301960711f3defbe6af858",
+      "notes": ""
+    },
+    "120": {
+      "status": "MAPPED",
+      "rbs": "Eilat.mp3",
+      "sha256": "96dcebfef1a235ef9ecf46fde695f7556f0d799681301960711f3defbe6af858",
+      "notes": ""
+    },
+    "140": {
+      "status": "MAPPED",
+      "rbs": "AzrieliStore.mp3",
+      "sha256": "b5dd31226d53d2b4ea7bb39ecd819fb7fe7a8bd275ab3ef0eb23fcca111a95e8",
+      "notes": ""
+    },
+    "150": {
+      "status": "MAPPED",
+      "rbs": "pool.mp3",
+      "sha256": "dd39ebd56ce2d0abd663183891b607e17a6315cf1b001cce6670ee5285937720",
+      "notes": ""
+    },
+    "160": {
+      "status": "MAPPED",
+      "rbs": "haifa.mp3",
+      "sha256": "b39414015cd29588700c0f219c5931c89f26ce778bf7d44e57b49d44caba05cd",
+      "notes": ""
+    },
+    "170": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "250": {
+      "status": "MAPPED",
+      "rbs": "Desertia.mp3",
+      "sha256": "918367a5ec0f298665db73ca7efffc6fc73c20f9b5389c703eee98df78153975",
+      "notes": ""
+    },
+    "310": {
+      "status": "MAPPED",
+      "rbs": "Desertia.mp3",
+      "sha256": "918367a5ec0f298665db73ca7efffc6fc73c20f9b5389c703eee98df78153975",
+      "notes": ""
+    },
+    "430": {
+      "status": "MAPPED",
+      "rbs": "ForestRiver.mp3",
+      "sha256": "2a5e554f6e31049d108eca2c74e6c031c8bdad319799fe43b416819b71baa9a4",
+      "notes": ""
+    },
+    "440": {
+      "status": "MAPPED",
+      "rbs": "ForestRiver.mp3",
+      "sha256": "2a5e554f6e31049d108eca2c74e6c031c8bdad319799fe43b416819b71baa9a4",
+      "notes": ""
+    },
+    "450": {
+      "status": "MAPPED",
+      "rbs": "telaviv_night.mp3",
+      "sha256": "fd04d7e3680407016611ec90b1eaba25488a3d73c4f64d68fad9769617b754ec",
+      "notes": ""
+    },
+    "500": {
+      "status": "MAPPED",
+      "rbs": "ForestTree.mp3",
+      "sha256": "fa008ade2ad68be9e54d12a472f868305c14f1d5e706f313e82f9831ae706ae2",
+      "notes": ""
+    },
+    "620": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "630": {
+      "status": "MAPPED",
+      "rbs": "haifa.mp3",
+      "sha256": "b39414015cd29588700c0f219c5931c89f26ce778bf7d44e57b49d44caba05cd",
+      "notes": ""
+    },
+    "660": {
+      "status": "MAPPED",
+      "rbs": "Eilat.mp3",
+      "sha256": "96dcebfef1a235ef9ecf46fde695f7556f0d799681301960711f3defbe6af858",
+      "notes": ""
+    },
+    "730": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "760": {
+      "status": "MAPPED",
+      "rbs": "ShugoArea.mp3",
+      "sha256": "713530facba42791d35d4f9b0687b17d4e285130ee5a904024ffdb1882d13360",
+      "notes": ""
+    },
+    "10010": {
+      "status": "MAPPED",
+      "rbs": "NewHousesArea.mp3",
+      "sha256": "7287f5db36008d9fd0b3185df9ac99867de8ce2ba4ebe48aa4052d930bc772d9",
+      "notes": ""
+    },
+    "10017": {
+      "status": "MAPPED",
+      "rbs": "NewHousesArea.mp3",
+      "sha256": "7287f5db36008d9fd0b3185df9ac99867de8ce2ba4ebe48aa4052d930bc772d9",
+      "notes": ""
+    },
+    "10022": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10030": {
+      "status": "MAPPED",
+      "rbs": "museum.3.mp3",
+      "sha256": "cee5477ef9c62b08d3264082f3cb38d468bc3fc8555b1735bff59016a18fcc1b",
+      "notes": ""
+    },
+    "10033": {
+      "status": "MAPPED",
+      "rbs": "Cave02.mp3",
+      "sha256": "dffda4ad113d9bf50857c826619cce4cee4f5a99779fe6fcdeb4425ecae9064c",
+      "notes": ""
+    },
+    "10064": {
+      "status": "MAPPED",
+      "rbs": "museum.3.mp3",
+      "sha256": "cee5477ef9c62b08d3264082f3cb38d468bc3fc8555b1735bff59016a18fcc1b",
+      "notes": ""
+    },
+    "10077": {
+      "status": "MAPPED",
+      "rbs": "ForestRiver.mp3",
+      "sha256": "2a5e554f6e31049d108eca2c74e6c031c8bdad319799fe43b416819b71baa9a4",
+      "notes": ""
+    },
+    "10085": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10098": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10100": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10101": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10109": {
+      "status": "MAPPED",
+      "rbs": "vilag_bar.mp3",
+      "sha256": "e799d9ebb2ab5f39e27ab89822e4228de6a03efa7f9e40a889447615db0006cc",
+      "notes": ""
+    },
+    "10112": {
+      "status": "MAPPED",
+      "rbs": "palace cloth store.mp3",
+      "sha256": "872eadf79b3a0d9d5a2c3689fad7311e9ec8ccaf7ddbf5babd35e7d2df559590",
+      "notes": ""
+    },
+    "10115": {
+      "status": "MAPPED",
+      "rbs": "palace cloth store.mp3",
+      "sha256": "872eadf79b3a0d9d5a2c3689fad7311e9ec8ccaf7ddbf5babd35e7d2df559590",
+      "notes": ""
+    },
+    "10130": {
+      "status": "NO_MUSIC",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10162": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10168": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10240": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10241": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10246": {
+      "status": "SKIPPED",
+      "rbs": null,
+      "sha256": null,
+      "notes": ""
+    },
+    "10268": {
+      "status": "MAPPED",
+      "rbs": "Cave02.mp3",
+      "sha256": "dffda4ad113d9bf50857c826619cce4cee4f5a99779fe6fcdeb4425ecae9064c",
+      "notes": ""
+    }
+  }
+}

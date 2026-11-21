@@ -1,0 +1,114 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (pinned 24.x)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          cache: 'npm'
+
+      - name: Setup Java (for ActionScript clean-room compiler)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit & integration tests
+        run: npm test
+
+      - name: Run public repository content audit
+        run: npm run audit:public
+
+      - name: Acquire clean Ruffle selfhosted runtime
+        run: npm run acquire:ruffle
+
+      - name: Setup open-source Hebrew/Latin fonts
+        run: npm run setup:fonts
+
+      - name: Build LocalGobe clean-room AIR shims
+        run: npm run build:air-shims
+
+      - name: Build production frontend and desktop main process
+        run: npm run build
+
+      - name: Package Windows production installer (x64 and ARM64)
+        run: npm run package:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate release manifest
+        run: npm run manifest:release
+
+      - name: Run release packaging audit
+        run: npm run audit:release
+
+      - name: Smoke test packaged executable
+        run: |
+          $proc = Start-Process -FilePath ".\release\win-unpacked\LocalGobe.exe" -ArgumentList "--smoke-test" -NoNewWindow -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "Packaged executable smoke test failed with exit code $($proc.ExitCode)"
+            exit $proc.ExitCode
+          }
+
+      - name: Generate SHA256 checksums
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const relDir = path.resolve('release');
+          const files = fs.readdirSync(relDir).filter(f => /^LocalGobe-Setup-.*\.exe$/i.test(f) || f === 'latest.yml' || f.endsWith('.blockmap') || f === 'RELEASE-MANIFEST.json').sort();
+          if (files.length === 0) throw new Error('No release artifacts found in ' + relDir);
+          const lines = [];
+          for (const f of files) {
+            const p = path.join(relDir, f);
+            const buf = fs.readFileSync(p);
+            const hash = crypto.createHash('sha256').update(buf).digest('hex').toLowerCase();
+            lines.push(hash + '  ' + f);
+          }
+          fs.writeFileSync(path.join(relDir, 'SHA256SUMS.txt'), lines.join('\n') + '\n', 'utf8');
+          console.log('Generated SHA256SUMS.txt:\n' + lines.join('\n'));
+          "
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: localgobe-windows-release
+          path: |
+            release/LocalGobe-Setup-*.exe
+            release/latest.yml
+            release/*.blockmap
+            release/SHA256SUMS.txt
+            release/RELEASE-MANIFEST.json
+
+      - name: Create GitHub Draft Pre-release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          files: |
+            release/LocalGobe-Setup-*.exe
+            release/latest.yml
+            release/*.blockmap
+            release/SHA256SUMS.txt
+            release/RELEASE-MANIFEST.json
